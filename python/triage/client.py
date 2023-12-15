@@ -11,6 +11,7 @@ import urllib3
 import json
 import os
 import platform
+import logging
 
 urllib3.disable_warnings()
 
@@ -18,6 +19,7 @@ class Client:
     def __init__(self, token, root_url='https://api.tria.ge'):
         self.token = token
         self.root_url = root_url.rstrip('/')
+        self.s = Session()
 
     def _new_request(self, method, path, j=None, b=None, headers=None):
         if headers is None:
@@ -35,9 +37,8 @@ class Client:
 
     def _req_file(self, method, path):
         r = self._new_request(method, path)
-        with Session() as s:
-            settings = s.merge_environment_settings(r.url, {}, None, False, None)
-            return s.send(r.prepare(), **settings).content
+        settings = self.s.merge_environment_settings(r.url, {}, None, False, None)
+        return self.s.send(r.prepare(), **settings).content
 
     def _req_json(self, method, path, data=None):
         if data is None:
@@ -46,14 +47,20 @@ class Client:
             r = self._new_request(method, path, data,
                 headers={'Content-Type': 'application/json'})
 
-        try:
-            with Session() as s:
-                settings = s.merge_environment_settings(r.url, {}, None, False, None)
-                res = s.send(r.prepare(), **settings)
+        num_tries = 0
+        settings = self.s.merge_environment_settings(r.url, {}, None, False, None)
+        while True:
+            try:
+                res = self.s.send(r.prepare(), **settings)
                 res.raise_for_status()
                 return res.json()
-        except exceptions.HTTPError as err:
-            raise ServerError(err)
+            except exceptions.HTTPError as err:
+                num_tries += 1
+                logging.error("HTTP Error")
+                logging.error(err)
+                if num_tries > 3:
+                    raise ServerError(err)
+                logging.error("Retry: %d" % (num_tries+1))
 
     def submit_sample_file(self, filename, file, interactive=False, profiles=None, password=None, timeout=150, network="internet", escape_filename=True, tags=None):
         """
